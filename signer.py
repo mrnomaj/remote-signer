@@ -8,10 +8,17 @@
 
 from flask import Flask, request, Response, json, jsonify
 from src.remote_signer import RemoteSigner
+from src.system_db import SystemDB
 from os import path
 import logging
 
 logging.basicConfig(filename='./remote-signer.log', format='%(asctime)s %(message)s', level=logging.INFO)
+
+MIN_ESCROW_TIME = 3600 * 24 # 1 day
+MAX_ESCROW_TIME = 3600 * 24 * 7 # 7 days
+
+sysDB = SystemDB('system.db', MIN_ESCROW_TIME, MAX_ESCROW_TIME)
+#sysDB.provision_database()
 
 app = Flask(__name__)
 
@@ -49,7 +56,7 @@ def sign(key_hash):
             logging.info('Found key_hash {} in config'.format(key_hash))
             key = config['keys'][key_hash]
             logging.info('Attempting to sign {}'.format(data))
-            rs = RemoteSigner(config, data)
+            rs = RemoteSigner(sysDB, config, data)
             response = jsonify({
                 'signature': rs.sign(key['private_handle'])
             })
@@ -102,6 +109,27 @@ def authorized_keys():
         mimetype='application/json'
     )
 
+'''
+GET /transfers/?id=<someid>: returns all requests that are pending if id is empty, or all requests that match id in JSON format
+POST /transfers/create: {"type":"transfer","amt":"float amount in tez","src":"src addr","dest":"dest addr","fee":"fee to pay baker"} - returns 200 OK or Bad Request
+POST /transfers/delete: {"id":"id of request returned from POST /transfers/create"} - 200 OK or Bad Request
+'''
+@app.route('/transfers/<id>', methods=['GET'])
+def get_transfers_with_id(id):
+    return jsonify(sysDB.op_select(id))
+
+@app.route('/transfers', methods=['GET'])
+def get_transfers():
+    return jsonify(sysDB.op_select())
+
+@app.route('/transfers', methods=['POST'])
+def insert_transfer():
+    data = request.get_json(force=True)
+    return jsonify(sysDB.op_insert(data))
+
+@app.route('/transfers/delete/<id>', methods=['POST'])
+def delete_transfer(id):
+    return jsonify(sysDB.op_delete(id))
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)
